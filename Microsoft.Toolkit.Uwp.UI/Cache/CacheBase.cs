@@ -106,9 +106,19 @@ namespace Microsoft.Toolkit.Uwp.UI
         /// </summary>
         /// <param name="duration">timespan to compute whether file has expired or not</param>
         /// <returns>awaitable task</returns>
-        public async Task ClearAsync(TimeSpan duration)
+        public Task ClearAsync(TimeSpan duration)
         {
-            DateTime expirationDate = DateTime.Now.Subtract(duration);
+            return RemoveExpiredAsync(duration);
+        }
+
+        /// <summary>
+        /// Removes cached files that have expired
+        /// </summary>
+        /// <param name="duration">Optional timespan to compute whether file has expired or not. If no value is supplied, <see cref="CacheDuration"/> is used.</param>
+        /// <returns>awaitable task</returns>
+        public async Task RemoveExpiredAsync(TimeSpan? duration)
+        {
+            TimeSpan expiryDuration = duration.HasValue ? duration.Value : CacheDuration;
 
             var folder = await GetCacheFolderAsync();
             var files = await folder.GetFilesAsync();
@@ -117,7 +127,12 @@ namespace Microsoft.Toolkit.Uwp.UI
 
             foreach (var file in files)
             {
-                if (await IsFileOutOfDate(file, expirationDate).ConfigureAwait(false))
+                if (file == null)
+                {
+                    continue;
+                }
+
+                if (await IsFileOutOfDate(file, expiryDuration, false).ConfigureAwait(false))
                 {
                     filesToDelete.Add(file);
                 }
@@ -125,7 +140,7 @@ namespace Microsoft.Toolkit.Uwp.UI
 
             await InternalClearAsync(files).ConfigureAwait(false);
 
-            _inMemoryFileStorage.Clear(duration);
+            _inMemoryFileStorage.Clear(expiryDuration);
         }
 
         /// <summary>
@@ -232,7 +247,6 @@ namespace Microsoft.Toolkit.Uwp.UI
         {
             StorageFile baseFile = null;
             T instance = default(T);
-            DateTime expirationDate = DateTime.Now.Subtract(CacheDuration);
 
             if (_inMemoryFileStorage.MaxItemCount > 0)
             {
@@ -251,7 +265,7 @@ namespace Microsoft.Toolkit.Uwp.UI
             var folder = await GetCacheFolderAsync();
 
             baseFile = await folder.TryGetItemAsync(fileName) as StorageFile;
-            if (await IsFileOutOfDate(baseFile, expirationDate))
+            if (baseFile == null || await IsFileOutOfDate(baseFile, CacheDuration))
             {
                 baseFile = await folder.CreateFileAsync(fileName, CreationCollisionOption.ReplaceExisting);
                 try
@@ -310,7 +324,7 @@ namespace Microsoft.Toolkit.Uwp.UI
             return instance;
         }
 
-        private async Task<bool> IsFileOutOfDate(StorageFile file, DateTime expirationDate)
+        private async Task<bool> IsFileOutOfDate(StorageFile file, TimeSpan duration, bool treatNullFileAsOutOfData = true)
         {
             if (file == null)
             {
@@ -318,7 +332,7 @@ namespace Microsoft.Toolkit.Uwp.UI
             }
 
             var properties = await file.GetBasicPropertiesAsync().AsTask().ConfigureAwait(false);
-            return properties.DateModified < expirationDate;
+            return DateTime.Now.Subtract(properties.DateModified.DateTime) > duration;
         }
 
         private async Task InternalClearAsync(IEnumerable<StorageFile> files)
